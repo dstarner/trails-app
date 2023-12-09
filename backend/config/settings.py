@@ -10,25 +10,72 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import datetime
+import os
 from pathlib import Path
+
+import dj_database_url
+from decouple import Csv, config
+
+from .utils import is_management_cmd, is_testing, multi_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-*qn(9h#6$u*p-c&3ikr-wy@8caz92t=!rhld)s8o56hn(h4ugy'
+GIT_BASE_DIR = BASE_DIR.parent
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config('DEBUG', cast=bool, default=True)
 
-ALLOWED_HOSTS = []
+# SECURITY WARNING: keep the secret key used in production secret!
+_default_key = 'django-insecure-la9=!g4kjp4hyr%m*t@+0jvnx$r2@1j6mt*1f(^hc!nkpyp&)o'
+SECRET_KEY = config('SECRET_KEY', default=_default_key)
+
+IS_TESTING = is_testing()
+TEST_RUNNER = 'backend.utils.testing.runner.PytestTestRunner'
+
+
+# Determine acceptable request domains
+# https://docs.djangoproject.com/en/4.2/ref/settings/#allowed-hosts
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv(), default='*')
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ValueError('ALLOWED_HOSTS cannot be empty when not in DEBUG')
+
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', cast=bool, default=False)
+
+# We need a special check so that we don't get infinite redirects
+SERVING_ON_HEROKU = config('SERVING_ON_HEROKU', cast=bool, default=False)
+HEROKU_APP_DOMAIN = 'herokuapp.com'
+if SERVING_ON_HEROKU:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+if not DEBUG:
+    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', cast=int, default=60)
+    CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', cast=bool, default=SECURE_SSL_REDIRECT)
+    SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', cast=bool, default=SECURE_SSL_REDIRECT)
+    X_FRAME_OPTIONS = config('X_FRAME_OPTIONS', cast=str, default='DENY').upper()
+    SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', cast=bool, default=SECURE_SSL_REDIRECT)
+    SECURE_BROWSER_XSS_FILTER = config('SECURE_BROWSER_XSS_FILTER', cast=bool, default=True)
+    SECURE_CONTENT_TYPE_NOSNIFF = config('SECURE_CONTENT_TYPE_NOSNIFF', cast=bool, default=True)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', cast=bool, default=SECURE_SSL_REDIRECT)
+
+
+# Cors Configuration
+# ------------------
+
+CORS_ORIGIN_ALLOW_ALL = DEBUG
+CORS_ALLOWED_ORIGINS = config(
+    'CORS_ALLOWED_ORIGINS',
+    cast=Csv(), default=(
+        'http://localhost:8000, http://127.0.0.1:8000,' +
+        'http://localhost:3000, http://127.0.0.1:3000'
+    ),
+)
 
 
 # Application definition
+
+# AUTH_USER_MODEL = 'accounts.User'
+
 LOCAL_APP_IMPORT_ROOT = 'backend'
 def _app(app):
     return f'{LOCAL_APP_IMPORT_ROOT}.apps.{app}'
@@ -45,6 +92,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'backend.utils.middleware.HerokuAppRedirectMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -59,7 +108,7 @@ ROOT_URLCONF = 'backend.config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -78,30 +127,79 @@ WSGI_APPLICATION = 'backend.config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
+if os.getenv('DATABASE_URL', None) is not None:
+    DATABASES = {
+        'default': dj_database_url.parse(os.environ.get('DATABASE_URL')),
+    }
+elif os.getenv('POSTGRES_DATABASE', None) is not None:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('POSTGRES_DATABASE'),
+            'USER': config('POSTGRES_USER'),
+            'PASSWORD': config('POSTGRES_PASSWORD'),
+            'HOST': config('POSTGRES_HOST', default='localhost'),
+            'PORT': config('POSTGRES_PORT', cast=int, default='5432'),
+        },
+    }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': GIT_BASE_DIR / 'db.sqlite3',
+        },
+    }
+
+CACHES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
     },
 }
+
+USE_MEMCACHED = config('USE_MEMCACHED', cast=bool, default=False)
+if USE_MEMCACHED:
+    _memcached_host_var_name = config('MEMCACHED_HOST_VAR_NAME', default='MEMCACHED_HOST')
+    _memcached_username_var_name = config('MEMCACHED_USER_VAR_NAME', default='MEMCACHED_USER')
+    _memcached_password_var_name = config('MEMCACHED_PASSWORD_VAR_NAME', default='MEMCACHED_PASSWORD')
+
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.memcached.PyLibMCCache',
+            'LOCATION': config(_memcached_host_var_name),
+            'OPTIONS': {
+                'binary': config('MEMCACHED_BINARY', cast=bool, default=True),
+                'username': config(_memcached_username_var_name),
+                'password': config(_memcached_password_var_name),
+                'behaviors': {
+                    # Enable faster IO
+                    'no_block': True,
+                    'tcp_nodelay': True,
+                    # Keep connection alive
+                    'tcp_keepalive': True,
+                    # Timeout settings
+                    'connect_timeout': 2000,  # ms
+                    'send_timeout': 750 * 1000,  # us
+                    'receive_timeout': 750 * 1000,  # us
+                    '_poll_timeout': 2000,  # ms
+                    # Better failover
+                    'ketama': True,
+                    'remove_failed': 1,
+                    'retry_timeout': 2,
+                    'dead_timeout': 30,
+                },
+            },
+        },
+    }
 
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
 
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 
@@ -121,8 +219,112 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = GIT_BASE_DIR / 'collected-static'
+
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',
+]
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = GIT_BASE_DIR / 'collected-media'
+
+# The following four configs determine if files get served from the server or an S3 storage
+S3_ENABLED = config('S3_ENABLED', cast=bool, default=False)
+# The following controls if we are using S3 or DigitalOcean's spaces
+S3_DO_SPACES_ENABLED = config('S3_DO_SPACES_ENABLED', cast=bool, default=False)
+LOCAL_SERVE_MEDIA_FILES = config('LOCAL_SERVE_MEDIA_FILES', cast=bool, default=not S3_ENABLED)
+LOCAL_SERVE_STATIC_FILES = config('LOCAL_SERVE_STATIC_FILES', cast=bool, default=not S3_ENABLED)
+
+if (not LOCAL_SERVE_MEDIA_FILES or not LOCAL_SERVE_STATIC_FILES) and not S3_ENABLED:
+    raise ValueError('S3_ENABLED must be true if either media or static files are not served locally')
+
+# Bucketeer is a Heroku addon, so we check for both that AND S3 values
+if S3_ENABLED:
+    AWS_ACCESS_KEY_ID = multi_config('BUCKETEER_AWS_ACCESS_KEY_ID', 'S3_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = multi_config('BUCKETEER_AWS_SECRET_ACCESS_KEY', 'S3_SECRET_ACCESS_KEY')
+    AWS_STORAGE_BUCKET_NAME = multi_config('BUCKETEER_BUCKET_NAME', 'S3_STORAGE_BUCKET_NAME')
+    AWS_S3_REGION_NAME = multi_config('BUCKETEER_AWS_REGION', 'S3_REGION_NAME')
+    AWS_DEFAULT_ACL = None
+    AWS_S3_SIGNATURE_VERSION = config('S3_SIGNATURE_VERSION', default='s3v4')
+    if S3_DO_SPACES_ENABLED:
+        AWS_S3_ENDPOINT_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.{AWS_S3_REGION_NAME}.digitaloceanspaces.com'
+    else:
+        AWS_S3_ENDPOINT_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    AWS_S3_OBJECT_PARAMETERS = {'CacheControl': 'max-age=86400'}
+
+if not LOCAL_SERVE_STATIC_FILES:
+    STATIC_LOCATION = 'public/static'
+    STATIC_URL = f'{"https://" if S3_DO_SPACES_ENABLED else ""}{AWS_S3_ENDPOINT_URL}/{STATIC_LOCATION}/'
+    STATICFILES_STORAGE = 'backend.utils.storage_backends.StaticStorage'
+
+if not LOCAL_SERVE_MEDIA_FILES:
+    PUBLIC_MEDIA_LOCATION = 'public/media'
+    MEDIA_URL = f'{"https://" if S3_DO_SPACES_ENABLED else ""}{AWS_S3_ENDPOINT_URL}/{PUBLIC_MEDIA_LOCATION}/'
+    DEFAULT_FILE_STORAGE = 'backend.utils.storage_backends.PublicMediaStorage'
+
+    PRIVATE_MEDIA_LOCATION = 'private/media'
+    PRIVATE_FILE_STORAGE = 'backend.utils.storage_backends.PrivateMediaStorage'
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Logging Settings
+# https://docs.djangoproject.com/en/1.11/topics/logging/
+
+_configure_logging = not IS_TESTING
+
+if _configure_logging:
+    LOG_LEVEL = config('LOG_LEVEL', default='DEBUG' if DEBUG or IS_TESTING else 'INFO')
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+            },
+        },
+        'filters': {
+            'require_debug_false': {
+                '()': 'django.utils.log.RequireDebugFalse',
+            },
+        },
+        'loggers': {
+            'django': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
+            'api': {
+                'handlers': ['console'],
+                'level': LOG_LEVEL,
+                'propagate': True,
+            },
+            'celery': {
+                'handlers': ['console'],
+                'level': 'INFO',
+                'propagate': True,
+            },
+        },
+    }
+
+
+# Celery Settings
+# https://docs.celeryproject.org/en/stable/userguide/configuration.html
+
+_celery_broker_var_name = config('CELERY_BROKER_VAR_NAME', default='CELERY_REDIS_BROKER_URL')
+
+_anon_celery_broker_url = config(_celery_broker_var_name, default='redis://worker-queue:6379/0')
+_redis_auth_token = config('CELERY_REDIS_AUTH_TOKEN', default='')
+_auth_celery_broker_url = _anon_celery_broker_url.replace('://', f'://{_redis_auth_token}@')
+CELERY_BROKER_URL = _auth_celery_broker_url if _redis_auth_token else _anon_celery_broker_url
+CELERY_RESULT_EXPIRES = config('CELERY_RESULT_EXPIRES_DAYS', cast=lambda v: datetime.timedelta(int(v)), default='2')
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TASK_TRACK_STARTED = True
+# CELERY_TASK_TIME_LIMIT = 30 * 60  # This causes a memory leak, hence why its commented out
+CELERY_TASK_ALWAYS_EAGER = config('CELERY_TASK_ALWAYS_EAGER', cast=bool, default=is_management_cmd() or is_testing())
+
+CELERY_BEAT_SCHEDULE = {}
