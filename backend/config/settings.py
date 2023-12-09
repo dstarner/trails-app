@@ -74,7 +74,7 @@ CORS_ALLOWED_ORIGINS = config(
 
 # Application definition
 
-# AUTH_USER_MODEL = 'accounts.User'
+AUTH_USER_MODEL = 'accounts.User'
 
 LOCAL_APP_IMPORT_ROOT = 'backend'
 def _app(app):
@@ -88,7 +88,13 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
+    # third party
+    'corsheaders',
+    'django_celery_beat',
+    'django_extensions',
+
     'backend.commands',
+    _app('accounts'),
 ]
 
 MIDDLEWARE = [
