@@ -1,0 +1,83 @@
+name: Backend CI
+
+env: {}
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  ruff:
+    name: Django Linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+
+      - name: Install OS Dependencies
+        run: |
+          sudo apt-get install -y --no-install-recommends libmemcached-dev libpq-dev gcc
+          python -m pip install --upgrade poetry
+      
+      - name: Install Python dependencies
+        run: |
+          poetry install --no-root
+      
+      - name: Run the linter
+        run: |
+          poetry run ./manage.py lint --no-fix
+
+  pytest:
+    name: Django Pytest
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: api_test
+          POSTGRES_PASSWORD: badpassword
+          POSTGRES_DB: api_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+        - 5432:5432
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+
+    - name: Install OS Dependencies
+      run: |
+        sudo apt-get install -y --no-install-recommends libmemcached-dev libpq-dev gcc
+        python -m pip install --upgrade poetry
+    
+    - name: Install Python dependencies
+      run: |
+        poetry install --no-root
+    
+    - name: Migrate Test Database
+      run: |
+        poetry run ./manage.py migrate
+      env:
+        POSTGRES_HOST: localhost
+        POSTGRES_USER: api_test
+        POSTGRES_DATABASE: api_test
+        POSTGRES_PASSWORD: badpassword
+        POSTGRES_PORT: 5432
+
+    - name: Run tests
+      run: |
+        poetry run ./manage.py test
+      env:
+        POSTGRES_HOST: localhost
+        POSTGRES_USER: api_test
+        POSTGRES_DATABASE: api_test
+        POSTGRES_PASSWORD: badpassword
+        POSTGRES_PORT: 5432
