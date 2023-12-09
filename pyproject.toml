@@ -1,0 +1,109 @@
+[tool.poetry]
+name = "wny-trails-map"
+version = "0.1.0"
+description = ""
+authors = ["Dan Starner <github@danstarner.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+Django = "^5.0"
+python-decouple = "^3.8"
+dj-database-url = "^2.1.0"
+gunicorn = "^21.2.0"
+
+[tool.poetry.group.dev.dependencies]
+coverage = "^7.3.2"
+pytest-cov = "^4.1.0"
+pytest-django = "^4.7.0"
+ruff = "^0.1.7"
+python-dotenv = "^1.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Project Management Tools Settings
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[tool.ruff]
+fix = false
+line-length = 120
+ignore = [
+    "A003",   # Class attribute `<whatever>` is shadowing a Python builtin
+    "FBT001", # boolean-positional-arg-in-function-definition
+    "FBT002", # Boolean default positional argument in function definition
+    "RUF012", # Mutable class attributes should be annotated with `typing.ClassVar`
+]
+select = [
+    # For all Rule groups, view:
+    # https://beta.ruff.rs/docs/rules/
+    "F",  # PyFlakes
+    "E",  # pycodestyle
+    "W",   # pycodestyle
+    "C90", #mccabe
+    "I",   # isort
+    "BLE", # flake8-blind-except
+    "FBT", # flake8-boolean-trap
+    "B",   # flake8-bugbear
+    "A",   # flake8-builtins
+    "COM", # flake8-commas
+    "Q",   # flake8-quotes
+    "PL",  # pylint
+    "RUF", # ruf
+]
+exclude = [
+    "migrations",
+    "backend/utils/testing/runner.py"
+]
+
+[tool.ruff.per-file-ignores]
+"backend/config/settings/all.py" = [
+    "F403", # unable to detect undefined names
+    "I001"  # Import block is un-sorted or un-formatted
+]
+"backend/apps/*/models/__init__.py" = [
+    "F401", # imported but unused
+]
+"backend/utils/monkeypatch/ninja.py" = [
+    "PLR0913",
+    "E501"
+]
+
+[tool.ruff.flake8-quotes]
+inline-quotes = "single"
+
+[tool.ruff.isort]
+known-first-party = ["backend"]
+relative-imports-order = "closest-to-furthest"
+
+[tool.pytest]
+DJANGO_SETTINGS_MODULE = "backend.config.settings"
+django_debug_mode = "keep"
+junit_family="xunit1"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+norecursedirs = ["collected-*", "templates"]
+
+[tool.coverage.run]
+omit = [
+    "*/commands/*.py",
+    "*/commands/management/*.py",
+    "backend/config/asgi.py",
+    "backend/config/celery.py",
+    "backend/config/gunicorn.py",
+    "backend/config/settings.py",
+    "backend/config/wsgi.py",
+    "backend/urls.py",
+    "backend/utils/storage_backends.py",
+    "backend/utils/testing/runner.py"
+]
+branch = true
+
+[tool.coverage.report]
+skip_covered = true
+precision = 2
+exclude_lines = [
+    "def __str__",
+    "pragma: no cover"
+]
